@@ -47,3 +47,32 @@ po/*~
 
 # RStudio Connect folder
 rsconnect/
+
+# ============================================================
+# CREDENCIALES Y CONFIGURACIÓN LOCAL
+
+.Renviron
+.env
+*.env
+credentials.*
+secrets.*
+
+# ARCHIVOS LOCALES DE R Y RSTUDIO
+
+.Rproj.user/
+.Rhistory
+.RData
+.Ruserdata
+
+# BASES DE DATOS Y ARCHIVOS TEMPORALES
+
+*.duckdb
+*.duckdb.wal
+*.tmp
+~$*
+
+# ARCHIVOS DEL SISTEMA OPERATIVO
+
+.DS_Store
+Thumbs.db
+desktop.ini
