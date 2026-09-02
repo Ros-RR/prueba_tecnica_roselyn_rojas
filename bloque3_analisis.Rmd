@@ -1,0 +1,532 @@
+---
+title: "Bloque 3 - Análisis Exploratorio + Experimentación"
+author: "Roselyn Rojas Rodríguez"
+date: "`r Sys.Date()`"
+output:
+  html_document:
+    toc: true
+    toc_depth: 3
+    number_sections: true
+    df_print: paged
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(
+  echo = FALSE,
+  warning = FALSE,
+  message = FALSE,
+  fig.align = "center"
+)
+
+library(dplyr)
+library(ggplot2)
+library(scales)
+library(lubridate)
+library(here)
+
+source(
+  here::here(
+    "R",
+    "04_analisis_exploratorio.R"
+  )
+)
+```
+
+# Objetivo
+
+El objetivo de este bloque es explorar el comportamiento comercial de la cadena mediante análisis de estacionalidad, categorías, cohortes de clientes, posibles quiebres de stock y otros patrones relevantes para el negocio.
+
+Adicionalmente, se evaluará un experimento A/B para determinar si existe evidencia estadística de un efecto asociado a una intervención promocional.
+
+# Consideraciones metodológicas
+
+Para mantener consistencia con los bloques anteriores:
+
+- Las transacciones `COMPLETED` incrementan el GMV.
+- Las transacciones `RETURNED` reducen el GMV cuando corresponde.
+- Los datos originales no se modifican.
+- Los hallazgos de calidad identificados en el Bloque 0 se consideran en los análisis donde resultan relevantes.
+- Las hipótesis propuestas a partir del análisis exploratorio se presentan como posibles explicaciones y no como relaciones causales confirmadas.
+- Para el análisis semanal se utilizan únicamente semanas completas, evitando comparar períodos parciales con semanas completas.
+
+---
+
+# Parte A - Análisis Exploratorio
+
+# Estacionalidad por formato
+
+## Evolución semanal del GMV
+
+Se analizó la evolución semanal del GMV neto para los cuatro formatos de tienda.
+
+Para evitar distorsiones, se excluyeron las semanas incompletas al inicio o al final del período disponible.
+
+```{r grafico-estacionalidad, fig.width=11, fig.height=6}
+grafico_estacionalidad
+```
+
+## Sensibilidad a las fluctuaciones semanales
+
+Para comparar la variabilidad relativa entre formatos se utilizó el **coeficiente de variación del GMV semanal**, calculado como la desviación estándar dividida entre el GMV promedio.
+
+Un coeficiente mayor representa una mayor variabilidad relativa de las ventas semanales.
+
+```{r tabla-sensibilidad}
+tabla_sensibilidad <- sensibilidad_formato %>%
+  mutate(
+    gmv_promedio = round(gmv_promedio, 2),
+    desviacion_gmv = round(desviacion_gmv, 2),
+    coef_variacion = round(coef_variacion, 3)
+  )
+
+knitr::kable(
+  tabla_sensibilidad,
+  col.names = c(
+    "Formato",
+    "Semanas",
+    "GMV promedio",
+    "Desviación GMV",
+    "Coeficiente de variación"
+  ),
+  caption = "Variabilidad semanal del GMV por formato"
+)
+```
+
+El formato **EXPRESS** presenta la mayor variabilidad relativa, con un coeficiente de variación de **0.229**.
+
+Le siguen:
+
+- DESCUENTO: 0.136.
+- SUPERMERCADO: 0.119.
+- HIPERMERCADO: 0.116.
+
+Esto indica que EXPRESS presenta una mayor sensibilidad a fluctuaciones de corto plazo en comparación con los demás formatos.
+
+## Principales picos de GMV
+
+Los tres mayores incrementos semanales observados fueron:
+
+```{r tabla-picos}
+tabla_picos <- top_3_picos %>%
+  select(
+    semana,
+    format,
+    gmv,
+    gmv_semana_anterior,
+    variacion_absoluta,
+    variacion_pct
+  ) %>%
+  mutate(
+    gmv = round(gmv, 2),
+    gmv_semana_anterior = round(gmv_semana_anterior, 2),
+    variacion_absoluta = round(variacion_absoluta, 2),
+    variacion_pct = round(variacion_pct, 1)
+  )
+
+knitr::kable(
+  tabla_picos,
+  col.names = c(
+    "Semana",
+    "Formato",
+    "GMV",
+    "GMV semana anterior",
+    "Variación absoluta",
+    "Variación %"
+  ),
+  caption = "Tres mayores incrementos semanales"
+)
+```
+
+Los tres principales picos corresponden al formato EXPRESS:
+
+- Semana del **12 de agosto de 2024**: +71.1%.
+- Semana del **1 de abril de 2024**: +62.8%.
+- Semana del **6 de mayo de 2024**: +57.9%.
+
+## Principales caídas de GMV
+
+```{r tabla-caidas}
+tabla_caidas <- top_3_caidas %>%
+  select(
+    semana,
+    format,
+    gmv,
+    gmv_semana_anterior,
+    variacion_absoluta,
+    variacion_pct
+  ) %>%
+  mutate(
+    gmv = round(gmv, 2),
+    gmv_semana_anterior = round(gmv_semana_anterior, 2),
+    variacion_absoluta = round(variacion_absoluta, 2),
+    variacion_pct = round(variacion_pct, 1)
+  )
+
+knitr::kable(
+  tabla_caidas,
+  col.names = c(
+    "Semana",
+    "Formato",
+    "GMV",
+    "GMV semana anterior",
+    "Variación absoluta",
+    "Variación %"
+  ),
+  caption = "Tres mayores caídas semanales"
+)
+```
+
+Las tres mayores caídas también corresponden al formato EXPRESS:
+
+- Semana del **5 de agosto de 2024**: -40.7%.
+- Semana del **14 de octubre de 2024**: -37.6%.
+- Semana del **20 de enero de 2025**: -34.5%.
+
+La concentración de los seis movimientos extremos en EXPRESS refuerza la evidencia de que este formato presenta una mayor volatilidad semanal.
+
+## Análisis de contribución por país y tienda
+
+Para entender si los movimientos extremos corresponden a un comportamiento general del formato o están concentrados en determinadas ubicaciones, se analiza la contribución de cada país y tienda al cambio observado.
+
+```{r contribucion-pais}
+tabla_contribucion_pais <- contribucion_extremos_pais %>%
+  select(
+    semana,
+    tipo_movimiento,
+    country,
+    gmv_semana_actual,
+    gmv_semana_anterior,
+    cambio_gmv,
+    contribucion_cambio_pct
+  ) %>%
+  mutate(
+    gmv_semana_actual = round(gmv_semana_actual, 2),
+    gmv_semana_anterior = round(gmv_semana_anterior, 2),
+    cambio_gmv = round(cambio_gmv, 2),
+    contribucion_cambio_pct = round(contribucion_cambio_pct, 1)
+  )
+
+knitr::kable(
+  tabla_contribucion_pais,
+  col.names = c(
+    "Semana",
+    "Movimiento",
+    "País",
+    "GMV actual",
+    "GMV anterior",
+    "Cambio GMV",
+    "Contribución %"
+  ),
+  caption = "Contribución por país a los movimientos extremos"
+)
+```
+
+```{r contribucion-tiendas}
+tabla_top_tiendas <- top_tiendas_extremos %>%
+  select(
+    semana,
+    tipo_movimiento,
+    store_id,
+    gmv_semana_actual,
+    gmv_semana_anterior,
+    cambio_gmv,
+    contribucion_cambio_pct
+  ) %>%
+  mutate(
+    gmv_semana_actual = round(gmv_semana_actual, 2),
+    gmv_semana_anterior = round(gmv_semana_anterior, 2),
+    cambio_gmv = round(cambio_gmv, 2),
+    contribucion_cambio_pct = round(contribucion_cambio_pct, 1)
+  )
+
+knitr::kable(
+  tabla_top_tiendas,
+  col.names = c(
+    "Semana",
+    "Movimiento",
+    "Tienda",
+    "GMV actual",
+    "GMV anterior",
+    "Cambio GMV",
+    "Contribución %"
+  ),
+  caption = "Principales tiendas contribuyentes a cada movimiento extremo"
+)
+```
+
+## Hipótesis sobre los movimientos extremos
+
+Los seis movimientos más extremos corresponden al formato EXPRESS, que además presenta la mayor variabilidad semanal.
+
+- **01-04-2024 (+62.8%)**: el crecimiento estuvo concentrado principalmente en Honduras.  
+  **Hipótesis:** efecto local en `TIENDA_038`, posiblemente asociado a una acción comercial o aumento puntual de demanda.
+
+- **06-05-2024 (+57.9%)**: el aumento se concentró en Honduras y Costa Rica.  
+  **Hipótesis:** mayor demanda o actividad comercial simultánea en ambos mercados.
+
+- **12-08-2024 (+71.1%)**: el crecimiento fue generalizado en todos los países.  
+  **Hipótesis:** posible efecto regional o estacional.
+
+- **05-08-2024 (-40.7%)**: la caída fue generalizada y estuvo seguida por el mayor pico del período.  
+  **Hipótesis:** posible desplazamiento de demanda hacia la semana siguiente.
+
+- **14-10-2024 (-37.6%)**: la caída se concentró principalmente en Nicaragua y Guatemala.  
+  **Hipótesis:** posible factor operativo o comercial localizado.
+
+- **20-01-2025 (-34.5%)**: todos los países presentaron disminuciones.  
+  **Hipótesis:** posible patrón estacional o contracción general de demanda.
+
+### Conclusión
+
+EXPRESS es el formato más volátil, con un coeficiente de variación de **0.229**. Los movimientos extremos muestran tanto eventos localizados como cambios generalizados, por lo que la variabilidad parece responder a una combinación de factores locales y regionales.
+
+---
+
+# 2. Pareto de categorías por formato
+
+## Resultados
+
+Se analizó la participación de cada categoría en el GMV de cada formato y su participación acumulada.
+
+```{r pareto-categorias, fig.width=12, fig.height=7}
+grafico_pareto
+```
+
+```{r tabla-pareto}
+tabla_pareto <- categorias_80 %>%
+  select(
+    format,
+    orden_categoria,
+    category,
+    participacion_pct,
+    participacion_acumulada_pct
+  ) %>%
+  mutate(
+    participacion_pct = round(participacion_pct, 1),
+    participacion_acumulada_pct = round(
+      participacion_acumulada_pct,
+      1
+    )
+  )
+
+knitr::kable(
+  tabla_pareto,
+  col.names = c(
+    "Formato",
+    "Orden",
+    "Categoría",
+    "Participación %",
+    "Acumulado %"
+  ),
+  caption = "Categorías que concentran aproximadamente el 80% del GMV"
+)
+```
+
+Las categorías que concentran aproximadamente el 80% del GMV son las mismas en los cuatro formatos:
+
+1. **Electrónica:** aproximadamente 52%-53%.
+2. **Hogar:** aproximadamente 23%.
+3. **Ropa:** aproximadamente 8%.
+
+En conjunto, estas tres categorías representan alrededor del **84% del GMV**.
+
+## Comparación HIPERMERCADO vs. DESCUENTO
+
+HIPERMERCADO y DESCUENTO presentan las mismas categorías líderes y participaciones muy similares.
+
+Esto indica que, a nivel de categoría, no se observa una diferencia importante en el perfil de compra entre ambos formatos.
+
+Las diferencias entre formatos podrían encontrarse más en variables como:
+
+- ticket promedio;
+- frecuencia de compra;
+- volumen de unidades;
+- promociones;
+- precios;
+- mix de productos dentro de cada categoría.
+
+### Conclusión
+
+La composición del GMV por categoría es altamente similar entre formatos.
+
+Electrónica, Hogar y Ropa dominan consistentemente el mix de ventas y representan cerca del 84% del GMV.
+
+---
+
+# 3. Cohortes de lealtad
+
+## Resultados
+
+Las cohortes recientes presentan una mayor retención en los primeros meses:
+
+- M1: **75.0%** recientes vs. **65.1%** antiguas.
+- M3: **70.8%** recientes vs. **68.2%** antiguas.
+- M6: **72.9%** recientes vs. **74.3%** antiguas.
+
+Por lo tanto, las cohortes recientes muestran una mejor retención inicial, pero esta ventaja no se mantiene hasta M6.
+
+> La comparación debe interpretarse con cautela, ya que las cohortes recientes contienen considerablemente menos clientes que las antiguas.
+
+```{r grafico-retencion, fig.width=10, fig.height=7}
+grafico_retencion_cohortes
+```
+
+## Evolución del ticket
+
+```{r grafico-ticket-retenidos, fig.width=9, fig.height=5}
+grafico_ticket_retenidos
+```
+
+El ticket promedio no presenta una tendencia creciente sostenida. Pasa de **285** en M0 a **290** en M1 y posteriormente disminuye hasta **273** en M6.
+
+## Mayor caída de retención
+
+La mayor caída ocurre entre la primera compra y el mes siguiente:
+
+**M0: 100% → M1: 65.3%**
+
+Esto representa una reducción de aproximadamente **34.7 puntos porcentuales**.
+
+### Conclusión
+
+El principal punto de pérdida de clientes ocurre en **M1**. Las cohortes recientes presentan mejor retención inicial, aunque la diferencia desaparece en M6, y el ticket promedio de los clientes retenidos tiende a disminuir ligeramente con el tiempo.
+
+---
+
+# 4. Quiebres de stock y su impacto
+
+## Resultados
+
+Se identificaron **309,786 gaps** de tres o más días sin ventas, distribuidos en las **40 tiendas** y los **200 productos**.
+
+El GMV potencial asociado es de aproximadamente **58.4 millones**, aunque este valor es una estimación teórica y no una pérdida confirmada.
+
+```{r grafico-quiebres, fig.width=9, fig.height=6}
+grafico_quiebres_categoria
+```
+
+Electrónica concentra **52.7%** del GMV estimado, seguida por Hogar (**23.3%**) y Ropa (**7.9%**).
+
+Sin embargo, la cantidad de gaps por producto es muy similar entre categorías y los principales proveedores presentan gaps en las 40 tiendas.
+
+## Conclusión
+
+No se observa evidencia clara de un problema sistemático de abastecimiento.
+
+Los resultados parecen estar más relacionados con **demanda intermitente** y con una regla de detección sensible.
+
+Para confirmar quiebres reales sería necesario incorporar información de inventario y reposición.
+
+
+---
+
+# 5. Hallazgo libre
+
+## Lealtad y ticket promedio
+
+Los clientes con tarjeta de lealtad representan aproximadamente **40.4% del GMV** y presentan un ticket promedio de **280**, frente a **278** en clientes sin lealtad.
+
+```{r hallazgo-lealtad, fig.width=9, fig.height=5}
+grafico_hallazgo_lealtad
+```
+
+La diferencia general es pequeña y varía por formato. El mayor contraste se observa en **HIPERMERCADO**, donde el ticket promedio es **284** para clientes con lealtad frente a **278** sin lealtad.
+
+En DESCUENTO y SUPERMERCADO prácticamente no existen diferencias, mientras que en EXPRESS el ticket de clientes con lealtad es ligeramente menor.
+
+## Impacto para el negocio
+
+La tarjeta de lealtad no parece estar asociada con un mayor ticket de forma generalizada. El efecto parece depender del formato, por lo que las estrategias de fidelización podrían evaluarse de manera diferenciada, especialmente en HIPERMERCADO.
+
+---
+
+# Parte B - Experimentación A/B
+
+# 1. Validación del experimento
+
+Se identificaron dos tiendas asignadas simultáneamente a CONTROL y TREATMENT:
+`TIENDA_008` y `TIENDA_037`. Ambas fueron excluidas del análisis.
+
+La muestra válida quedó conformada por:
+
+- **18 tiendas CONTROL**
+- **20 tiendas TREATMENT**
+
+En el período previo al experimento no se encontraron diferencias
+estadísticamente significativas en GMV base (p = **0.596**) ni en la
+distribución por formato (p = **0.346**).
+
+Sin embargo, sí existe una diferencia significativa en tamaño de tienda
+(p = **0.036**): CONTROL presenta un tamaño promedio de **3,100 m²** frente a
+**1,813 m²** en TREATMENT.
+
+Los grupos son comparables en GMV base y formato, pero presentan un desbalance
+en tamaño de tienda. Este factor debe considerarse como una limitación al
+interpretar el efecto del experimento.
+
+
+# 2. Resultado en GMV
+
+El GMV semanal promedio fue de **16,137** en CONTROL y **13,333** en TREATMENT.
+
+La diferencia estimada fue de **-2,804**, equivalente a un uplift de **-17.4%** para TREATMENT.
+
+El resultado no es estadísticamente significativo:
+
+- **p-value:** 0.228
+- **IC 95%:** [-7,444 ; 1,835]
+
+Por lo tanto, no existe evidencia suficiente para concluir que TREATMENT aumentó el GMV semanal por tienda.
+
+Como análisis de sensibilidad, TREATMENT presentó una mejora de **4.43%** respecto a su período previo, mientras CONTROL cayó **5.07%**.
+
+Este resultado es favorable para TREATMENT, pero debe interpretarse con cautela debido al desbalance observado en el tamaño de las tiendas.
+
+
+# 3. Resultado en ticket y frecuencia
+
+El ticket promedio fue de **279** en CONTROL y **274** en TREATMENT.
+
+Las transacciones semanales promedio por tienda fueron **59.0** en CONTROL y **49.8** en TREATMENT.
+
+Las diferencias no fueron estadísticamente significativas:
+
+- Ticket promedio: **p = 0.414**
+- Frecuencia de transacciones: **p = 0.272**
+
+No se observa evidencia de que el tratamiento haya generado tickets más altos ni una mayor frecuencia de compra.
+
+Por lo tanto, el experimento no muestra un efecto positivo claro sobre ninguno de los dos componentes que explican el GMV.
+
+
+# 4. Decisión de negocio
+
+No recomendaría implementar TREATMENT en todas las tiendas con la evidencia actual.
+
+El experimento presenta:
+
+- Uplift de GMV: **-17.4%**
+- p-value: **0.228**
+- IC 95%: **[-7,444 ; 1,835]**
+- Sin diferencias significativas en ticket (**p = 0.414**) ni frecuencia (**p = 0.272**).
+
+Aunque TREATMENT mejoró **4.43%** respecto a su propio período previo, existe un desbalance significativo en el tamaño de las tiendas, por lo que este resultado debe interpretarse con cautela.
+
+Además, sin evidencia de incremento en GMV no se justificaría asumir el costo de implementar la nueva exhibición a escala.
+
+¿Qué cambiaría si el p-value fuera 0.08?
+
+Un p-value de **0.08** seguiría sin ser significativo bajo un nivel de 5%, por lo que tampoco justificaría un despliegue general.
+
+Sin embargo, si el efecto fuera positivo y comercialmente relevante, lo consideraría una señal para **extender el experimento**, aumentando la muestra y mejorando el balance entre CONTROL y TREATMENT antes de tomar una decisión definitiva.
+
+
+---
+
+# Conclusiones generales
+
+El análisis exploratorio mostró diferencias relevantes entre formatos, especialmente una mayor volatilidad en EXPRESS, mientras que el mix de categorías fue muy similar entre formatos.
+
+En cohortes, la principal pérdida de clientes ocurre en M1 y no se observa una mejora sostenida del ticket con el tiempo. Los posibles quiebres detectados parecen estar más relacionados con demanda intermitente que con un problema sistemático de abastecimiento.
+
+En el experimento A/B, TREATMENT no mostró una mejora estadísticamente significativa en GMV, ticket ni frecuencia. Por lo tanto, no se recomienda su implementación general sin realizar una prueba adicional mejor balanceada.

@@ -15,9 +15,9 @@ de Analista Sr. de Datos.
 El caso analiza 18 meses de información transaccional de una cadena de
 retail multiformato con presencia en cinco países de Centroamérica.
 
-La solución incluye procesos de auditoría de calidad, análisis SQL,
-modelado de datos, análisis exploratorio, evaluación de experimentos A/B,
-definición de KPIs y construcción de visualizaciones ejecutivas.
+La solución incluye auditoría de calidad, análisis SQL, modelado de datos,
+análisis exploratorio, experimentación A/B, definición de KPIs y
+visualizaciones ejecutivas.
 
 ---
 
@@ -48,11 +48,19 @@ R/
 ├── 00_config.R              Configuración, rutas y tipos de datos
 ├── 01_ingesta.R             Lectura y tipado de los archivos CSV
 ├── 02_auditoria_calidad.R   Auditoría de calidad de datos
-└── 03_carga_sql.R           Creación y carga de la base DuckDB
+├── 03_carga_sql.R           Creación y carga de la base DuckDB
+├── 04_analisis_exploratorio.R
+└── 05_ab_test.R
 
-docs/                        Documentación técnica
+docs/
+└── registro_uso_ia.md
+
 bloque3_visualizaciones/     Visualizaciones exportadas
 
 bloque0_auditoria.Rmd
 bloque0_auditoria.md
 bloque1_queries.sql
+bloque2_modelo.pdf
+bloque2_decisiones.md
+bloque3_analisis.Rmd
+bloque3_analisis.html
