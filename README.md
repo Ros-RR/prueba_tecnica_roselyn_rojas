@@ -17,12 +17,13 @@ retail multiformato con presencia en cinco países de Centroamérica.
 
 La solución desarrollada comprende:
 
-- Auditoría de calidad de datos
-- Análisis SQL avanzado
-- Modelado dimensional y diseño de pipeline
-- Análisis exploratorio
-- Experimentación A/B
-- Definición de un framework de KPIs
+- Auditoría de calidad de datos.
+- Análisis SQL avanzado.
+- Modelado dimensional y diseño de pipeline.
+- Análisis exploratorio.
+- Experimentación A/B.
+- Definición de un framework de KPIs.
+- Propuesta de implementación del dashboard y presentación ejecutiva.
 
 ---
 
@@ -38,6 +39,10 @@ La solución desarrollada comprende:
 
 DuckDB se utiliza como motor SQL local para ejecutar y validar de forma
 reproducible las consultas del Bloque 1.
+
+Power BI fue considerado como herramienta objetivo para la implementación
+del dashboard del Bloque 5, cuya propuesta de diseño se encuentra documentada
+en el repositorio.
 
 ---
 
@@ -81,6 +86,7 @@ bloque3_analisis.Rmd
 bloque3_analisis.html
 bloque4_kpi_framework.Rmd
 bloque4_kpi_framework.md
+bloque5_propuesta_implementacion.md
 
 renv.lock
 prueba_tecnica_roselyn_rojas.Rproj
