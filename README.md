@@ -64,3 +64,4 @@ bloque2_modelo.pdf
 bloque2_decisiones.md
 bloque3_analisis.Rmd
 bloque3_analisis.html
+bloque4_kpi_framework.md
