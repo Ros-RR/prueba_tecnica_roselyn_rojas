@@ -1,0 +1,1267 @@
+---
+title: "Bloque 0 - Auditoría de Calidad de Datos"
+author: "Roselyn Rojas"
+output:
+  github_document:
+    toc: true
+    toc_depth: 2
+---
+
+```{r setup, include=FALSE}
+# Este script carga previamente 01_ingesta.R y 00_config.R
+
+knitr::opts_chunk$set(
+  echo = FALSE,
+  warning = FALSE,
+  message = FALSE
+)
+
+source(
+  here::here(
+    "R",
+    "02_auditoria_calidad.R"
+  )
+)
+
+```
+
+# Auditoría de Calidad de Datos
+
+Antes de realizar los análisis de negocio, se ejecutó una auditoría sobre los
+seis archivos suministrados con el objetivo de identificar problemas de
+completitud, consistencia, unicidad, validez, integridad referencial,
+frescura, integridad temporal y asignación del experimento A/B.
+
+Para cada validación se documenta:evidencia cuantitativa,interpretación del hallazgo,decisión aplicada y nivel de severidad.
+
+Los archivos originales ubicados en `data/raw/` no fueron modificados durante
+la auditoría.
+
+---
+
+# 1. Completitud - `customer_id`
+
+Se evaluó la ausencia de `customer_id` y su consistencia con el uso de la
+tarjeta de lealtad (`loyalty_card`).
+
+
+```{r completitud_customer_id}
+
+tabla_completitud <- aud_completitud %>%
+  transmute(
+    `Total transacciones` =
+      format(
+        total_transacciones,
+        big.mark = ",",
+        scientific = FALSE
+      ),
+
+    `Sin customer_id` =
+      format(
+        customer_id_nulo,
+        big.mark = ",",
+        scientific = FALSE
+      ),
+
+    `% sin customer_id` =
+      paste0(
+        pct_customer_id_nulo,
+        "%"
+      ),
+
+    `customer_id nulo + loyalty FALSE` =
+      format(
+        nulo_sin_lealtad,
+        big.mark = ",",
+        scientific = FALSE
+      ),
+
+    `customer_id nulo + loyalty TRUE` =
+      format(
+        nulo_con_lealtad,
+        big.mark = ",",
+        scientific = FALSE
+      ),
+
+    `customer_id presente + loyalty FALSE` =
+      format(
+        customer_presente_sin_lealtad,
+        big.mark = ",",
+        scientific = FALSE
+      ),
+
+    `customer_id presente + loyalty TRUE` =
+      format(
+        customer_presente_con_lealtad,
+        big.mark = ",",
+        scientific = FALSE
+      )
+  )
+
+knitr::kable(
+  tabla_completitud,
+  align = "r"
+)
+
+```
+
+De un total de **`r format(aud_completitud$total_transacciones, big.mark = ",")`**
+transacciones, **`r format(aud_completitud$customer_id_nulo, big.mark = ",")`**
+(**`r aud_completitud$pct_customer_id_nulo`%**) no presentan `customer_id`.
+
+La totalidad de estos registros corresponde a transacciones con
+`loyalty_card = FALSE`.
+
+No se identificaron casos con `customer_id` nulo y `loyalty_card = TRUE`, ni
+registros con `customer_id` informado y `loyalty_card = FALSE`.
+
+Por lo tanto, la ausencia de `customer_id` es consistente con la definición
+del dataset y no se considera un error de calidad.
+
+**Decisión:** conservar todas las transacciones para los análisis agregados de
+ventas. Las transacciones sin `customer_id` se excluirán únicamente de los
+análisis que requieran identificación individual del cliente, como cohortes y
+retención.
+
+**Severidad:** Informativa. No afecta las métricas agregadas de ventas, aunque
+limita los análisis que requieren identificación individual del cliente.
+
+---
+
+# 2. Consistencia - `total_amount` vs. detalle de transacción
+
+Se evaluó la consistencia entre el monto registrado en
+`transactions.total_amount` y la suma de `quantity * unit_price` de los
+artículos asociados a cada transacción.
+
+Para evitar clasificar diferencias mínimas de representación decimal como
+errores, se utilizó una tolerancia monetaria de **0.01**.
+
+
+```{r consistencia_resumen}
+
+tabla_consistencia <- aud_consistencia %>%
+  transmute(
+    `Total transacciones` =
+      format(
+        total_transacciones,
+        big.mark = ",",
+        scientific = FALSE
+      ),
+
+    `Monto consistente` =
+      format(
+        coinciden,
+        big.mark = ",",
+        scientific = FALSE
+      ),
+
+    `Monto inconsistente` =
+      format(
+        no_coinciden,
+        big.mark = ",",
+        scientific = FALSE
+      ),
+
+    `% inconsistente` =
+      paste0(
+        pct_no_coinciden,
+        "%"
+      ),
+
+    `Sin detalle` =
+      format(
+        sin_detalle,
+        big.mark = ",",
+        scientific = FALSE
+      )
+  )
+
+knitr::kable(
+  tabla_consistencia,
+  align = "r"
+)
+
+```
+
+De un total de
+**`r format(aud_consistencia$total_transacciones, big.mark = ",")`**
+transacciones,
+**`r format(aud_consistencia$coinciden, big.mark = ",")`**
+presentaron diferencias iguales o inferiores a la tolerancia definida.
+
+Se identificaron
+**`r format(aud_consistencia$no_coinciden, big.mark = ",")`**
+transacciones, equivalentes al
+**`r aud_consistencia$pct_no_coinciden`%** del total, con diferencias
+superiores a 0.01.
+
+Todas las transacciones poseen registros asociados en
+`transaction_items`, por lo que no se identificaron operaciones sin detalle.
+
+### Magnitud de las discrepancias
+
+```{r consistencia_magnitud}
+
+tabla_magnitud <- aud_magnitud_diferencias %>%
+  transmute(
+    `Promedio` =
+      round(diferencia_promedio, 2),
+
+    `Mediana` =
+      round(mediana, 2),
+
+    `P75` =
+      round(percentil_75, 2),
+
+    `P90` =
+      round(percentil_90, 2),
+
+    `P95` =
+      round(percentil_95, 2),
+
+    `P99` =
+      round(percentil_99, 2),
+
+    `Máximo` =
+      round(diferencia_maxima, 2)
+  )
+
+knitr::kable(
+  tabla_magnitud,
+  align = "r"
+)
+
+```
+
+Entre las transacciones inconsistentes, la diferencia absoluta promedio fue de
+**`r round(aud_magnitud_diferencias$diferencia_promedio, 2)`** y la mediana de
+**`r round(aud_magnitud_diferencias$mediana, 2)`**.
+
+La magnitud observada indica que las discrepancias no pueden atribuirse
+únicamente a redondeos o diferencias menores de precisión decimal.
+
+### Relación con el estado de la transacción
+
+El **98.4%** de las transacciones inconsistentes corresponde a operaciones
+`COMPLETED` y el **1.6%** a `RETURNED`.
+
+Este resultado sugiere que el estado `RETURNED` no explica por sí solo las
+diferencias identificadas entre el monto de cabecera y el detalle de los
+artículos.
+
+**Decisión provisional:** conservar las transacciones y marcarlas como alerta
+de calidad hasta completar el análisis de la dirección de las diferencias y
+su posible relación con promociones u otras reglas de negocio. No se excluirán
+registros ni se sustituirá todavía `total_amount` por el monto calculado desde
+el detalle.
+
+**Severidad:** Media. La incidencia representa aproximadamente el 1% de las
+transacciones, pero la magnitud de algunas diferencias puede afectar el cálculo
+de GMV y otras métricas monetarias.
+
+
+---
+
+# 3. Unicidad - `transaction_id`
+
+Se evaluó la unicidad de `transaction_id`, campo definido como identificador
+único de cada transacción.
+
+```{r unicidad_transaction_id}
+
+tabla_unicidad <- aud_unicidad %>%
+  transmute(
+    `Total transacciones` =
+      format(
+        total_transacciones,
+        big.mark = ",",
+        scientific = FALSE
+      ),
+
+    `ID nulos` =
+      format(
+        transaction_id_nulos,
+        big.mark = ",",
+        scientific = FALSE
+      ),
+
+    `ID duplicados` =
+      format(
+        transaction_id_duplicados,
+        big.mark = ",",
+        scientific = FALSE
+      ),
+
+    `Filas involucradas` =
+      format(
+        filas_involucradas,
+        big.mark = ",",
+        scientific = FALSE
+      ),
+
+    `Filas excedentes` =
+      format(
+        filas_excedentes,
+        big.mark = ",",
+        scientific = FALSE
+      )
+  )
+
+knitr::kable(
+  tabla_unicidad,
+  align = "r"
+)
+
+```
+
+No se identificaron valores duplicados de `transaction_id`. Por lo tanto,
+cada registro de `transactions` posee un identificador único y no existen
+filas excedentes asociadas a duplicidad de la llave.
+
+Asimismo, no se identificaron valores nulos en `transaction_id`, por lo que
+el campo cumple con las condiciones esperadas para funcionar como llave
+primaria de la tabla.
+
+**Decisión:** no se requiere corrección ni deduplicación de `transactions`.
+Se utilizará `transaction_id` como identificador único para las relaciones
+con `transaction_items` y para los conteos de transacciones en los análisis
+posteriores.
+
+**Severidad:** Sin hallazgos. No se identificaron problemas de unicidad en la
+llave principal.
+
+---
+
+# 4. Validez
+
+Se evaluaron valores que podrían representar condiciones económicamente
+inválidas o inconsistencias en la información transaccional.
+
+---
+
+## 4.1 Validez de `total_amount`
+
+```{r validez_total_amount}
+
+tabla_total_amount <- aud_total_amount %>%
+  transmute(
+    `Total transacciones` =
+      format(
+        total_transacciones,
+        big.mark = ",",
+        scientific = FALSE
+      ),
+
+    `Monto negativo` =
+      format(
+        monto_negativo,
+        big.mark = ",",
+        scientific = FALSE
+      ),
+
+    `Monto cero` =
+      format(
+        monto_cero,
+        big.mark = ",",
+        scientific = FALSE
+      ),
+
+    `% monto cero` =
+      paste0(
+        pct_monto_cero,
+        "%"
+      ),
+
+    `Monto positivo` =
+      format(
+        monto_positivo,
+        big.mark = ",",
+        scientific = FALSE
+      )
+  )
+
+knitr::kable(
+  tabla_total_amount,
+  align = "r"
+)
+
+```
+
+No se identificaron transacciones con `total_amount` negativo.
+
+Se detectaron únicamente
+**`r format(aud_total_amount$monto_cero, big.mark = ",")`**
+transacciones con monto igual a cero, equivalentes al
+**`r aud_total_amount$pct_monto_cero`%** del total.
+
+La revisión del detalle mostró que las tres operaciones corresponden a
+transacciones `COMPLETED` y contienen el mismo producto, `ITEM_089`, registrado
+con `unit_price = 0` y `was_on_promo = FALSE`.
+
+En estos casos, tanto el monto de cabecera como el monto calculado desde el
+detalle son iguales a cero. Por lo tanto, las transacciones son internamente
+consistentes, pero presentan una anomalía desde el punto de vista de validez
+económica.
+
+Las tres operaciones se registraron en tiendas diferentes, por lo que el patrón
+no se encuentra inicialmente concentrado en un único establecimiento.
+
+---
+
+## 4.2 `unit_price = 0` sin promoción
+
+```{r validez_unit_price}
+
+tabla_precio_cero <- aud_precio_cero %>%
+  transmute(
+    `Total líneas` =
+      format(
+        total_items,
+        big.mark = ",",
+        scientific = FALSE
+      ),
+
+    `Precio cero sin promoción` =
+      format(
+        precio_cero_sin_promo,
+        big.mark = ",",
+        scientific = FALSE
+      ),
+
+    `% afectado` =
+      paste0(
+        pct_precio_cero_sin_promo,
+        "%"
+      )
+  )
+
+knitr::kable(
+  tabla_precio_cero,
+  align = "r"
+)
+
+```
+
+De **`r format(aud_precio_cero$total_items, big.mark = ",")`** líneas de
+transacción,
+**`r format(aud_precio_cero$precio_cero_sin_promo, big.mark = ",")`**
+presentan `unit_price = 0` y `was_on_promo = FALSE`, equivalentes al
+**`r aud_precio_cero$pct_precio_cero_sin_promo`%** del total.
+
+La incidencia sobre el dataset completo es reducida. Sin embargo, el análisis
+por producto mostró una concentración sistemática del problema.
+
+```{r validez_producto_afectado}
+
+tabla_producto_cero <- aud_precio_cero_producto %>%
+  transmute(
+    `Producto` = item_id,
+    `Nombre` = item_name,
+    `Categoría` = category,
+    `Proveedor` = vendor_id,
+
+    `Costo` =
+      round(cost, 2),
+
+    `Casos precio cero` =
+      format(
+        casos_precio_cero,
+        big.mark = ",",
+        scientific = FALSE
+      ),
+
+    `% de anomalías` =
+      paste0(
+        porcentaje_casos,
+        "%"
+      )
+  )
+
+knitr::kable(
+  tabla_producto_cero,
+  align = c("l", "l", "l", "l", "r", "r", "r")
+)
+
+```
+
+Los registros anómalos se concentran en `ITEM_089`, correspondiente al producto
+**Bebidas Producto 89**, de la categoría Bebidas y proveedor `VND_027`.
+
+El producto tiene un costo unitario de **7.10**, por lo que el registro de una
+venta a precio cero sin una promoción explícita representa una condición
+económicamente atípica.
+
+### Comportamiento histórico de `ITEM_089`
+
+```{r validez_item089}
+
+tabla_item089 <- aud_item089 %>%
+  transmute(
+    `Total líneas` =
+      format(
+        total_lineas,
+        big.mark = ",",
+        scientific = FALSE
+      ),
+
+    `Precio cero` =
+      format(
+        precio_cero,
+        big.mark = ",",
+        scientific = FALSE
+      ),
+
+    `Precio cero sin promoción` =
+      format(
+        precio_cero_sin_promo,
+        big.mark = ",",
+        scientific = FALSE
+      ),
+
+    `% precio cero` =
+      paste0(
+        pct_precio_cero,
+        "%"
+      ),
+
+    `Precio positivo` =
+      format(
+        precio_positivo,
+        big.mark = ",",
+        scientific = FALSE
+      ),
+
+    `Precio promedio` =
+      round(precio_promedio, 2),
+
+    `Mediana` =
+      round(mediana_precio, 2),
+
+    `Precio máximo` =
+      round(precio_maximo, 2)
+  )
+
+knitr::kable(
+  tabla_item089,
+  align = "r"
+)
+
+```
+
+`ITEM_089` registra
+**`r format(aud_item089$total_lineas, big.mark = ",")`**
+líneas de venta durante el período.
+
+De ellas,
+**`r format(aud_item089$precio_positivo, big.mark = ",")`**
+presentan un precio mayor que cero y
+**`r format(aud_item089$precio_cero_sin_promo, big.mark = ",")`**
+presentan precio cero sin promoción.
+
+El precio mediano observado para el producto es
+**`r round(aud_item089$mediana_precio, 2)`**, mientras que su costo unitario
+es **`r round(info_item089$cost, 2)`**.
+
+La combinación de costo positivo, comportamiento histórico de venta a precios
+mayores que cero y registros puntuales a precio cero sin promoción sugiere una
+anomalía sistemática asociada al registro del precio de este SKU.
+
+---
+
+### Relación con la consistencia de montos
+
+Se evaluó si los registros de precio cero explican las discrepancias detectadas
+entre `total_amount` y el monto calculado desde `transaction_items`.
+
+```{r validez_precio_cero_consistencia}
+
+tabla_precio_cero_consistencia <- aud_precio_cero_consistencia %>%
+  mutate(
+    resultado =
+      ifelse(
+        coincide,
+        "Monto consistente",
+        "Monto inconsistente"
+      )
+  ) %>%
+  transmute(
+    `Resultado` = resultado,
+
+    `Líneas` =
+      format(
+        lineas,
+        big.mark = ",",
+        scientific = FALSE
+      ),
+
+    `Porcentaje` =
+      paste0(
+        porcentaje,
+        "%"
+      )
+  )
+
+knitr::kable(
+  tabla_precio_cero_consistencia,
+  align = c("l", "r", "r")
+)
+
+```
+
+De las
+**`r format(aud_precio_cero$precio_cero_sin_promo, big.mark = ",")`**
+líneas con precio cero sin promoción,
+**228 (98.7%)** pertenecen a transacciones cuyo `total_amount` coincide con el
+monto calculado desde el detalle.
+
+Únicamente **3 líneas (1.3%)** se encuentran asociadas con transacciones que
+también presentan una discrepancia monetaria.
+
+Estas tres transacciones representan aproximadamente
+**`r aud_precio_cero_inconsistente$pct_sobre_inconsistencias`%**
+de las inconsistencias monetarias identificadas en la sección anterior.
+
+Por lo tanto, la anomalía de precio cero no explica el problema general de
+conciliación entre `total_amount` y `transaction_items`. Ambos hallazgos deben
+tratarse como problemas de calidad distintos.
+
+---
+
+**Decisión:** conservar los registros en la capa original y crear una bandera
+de calidad para identificar las líneas con `unit_price = 0` y
+`was_on_promo = FALSE`.
+
+No se realizará una imputación automática del precio, ya que el dataset no
+proporciona una regla de negocio que permita determinar de forma confiable cuál
+debió ser el precio aplicado en cada operación.
+
+Las líneas afectadas serán tratadas separadamente en los análisis que dependan
+directamente del precio del producto, principalmente margen bruto y GMROI.
+
+Las transacciones podrán conservarse para análisis agregados basados en
+`total_amount` cuando el monto de cabecera sea válido.
+
+Las tres transacciones con `total_amount = 0` también serán marcadas como
+anómalas. Aunque existe consistencia entre cabecera y detalle, corresponden a
+operaciones `COMPLETED` sobre un producto con costo positivo vendido a precio
+cero sin promoción registrada.
+
+**Severidad:** Media. La incidencia sobre el volumen total de datos es baja,
+pero el patrón está concentrado sistemáticamente en un producto y puede
+distorsionar métricas de precio, margen y rentabilidad a nivel SKU.
+
+---
+
+# 5. Integridad referencial
+
+Se evaluó la integridad de las principales relaciones entre las tablas
+transaccionales y las tablas maestras.
+
+Las relaciones revisadas fueron:
+
+- `transactions.store_id` → `stores.store_id`;
+- `products.vendor_id` → `vendors.vendor_id`.
+
+---
+
+## 5.1 Integridad de tiendas
+
+```{r integridad_stores}
+
+tabla_fk_stores <- aud_fk_stores %>%
+  transmute(
+    `Total transacciones` =
+      format(
+        total_transacciones,
+        big.mark = ",",
+        scientific = FALSE
+      ),
+
+    `Transacciones afectadas` =
+      format(
+        filas_afectadas,
+        big.mark = ",",
+        scientific = FALSE
+      ),
+
+    `Tiendas inexistentes` =
+      tiendas_inexistentes,
+
+    `% afectado` =
+      paste0(
+        pct_transacciones_afectadas,
+        "%"
+      )
+  )
+
+knitr::kable(
+  tabla_fk_stores,
+  align = "r"
+)
+
+```
+
+`r if (
+  aud_fk_stores$filas_afectadas == 0
+) {
+  "No se identificaron transacciones asociadas a store_id inexistentes en la tabla stores. La relación entre transactions y stores presenta integridad referencial completa para los registros analizados."
+} else {
+  paste0(
+    "Se identificaron ",
+    format(aud_fk_stores$filas_afectadas, big.mark = ","),
+    " transacciones asociadas a ",
+    aud_fk_stores$tiendas_inexistentes,
+    " store_id que no existen en la tabla stores. Esto representa ",
+    aud_fk_stores$pct_transacciones_afectadas,
+    "% de las transacciones."
+  )
+}`
+
+`r if (
+  aud_fk_stores$filas_afectadas == 0
+) {
+  "**Decisión:** no se requiere tratamiento adicional para la relación entre transacciones y tiendas."
+} else {
+  "**Decisión:** conservar las transacciones en la capa original, marcarlas como registros con tienda no encontrada y excluirlas únicamente de análisis que requieran atributos de la dimensión stores hasta resolver la referencia."
+}`
+
+`r if (
+  aud_fk_stores$filas_afectadas == 0
+) {
+  "**Severidad:** Sin hallazgos."
+} else {
+  "**Severidad:** Media. La existencia de transacciones sin una tienda válida puede afectar análisis por país, formato, región y productividad."
+}`
+
+---
+
+## 5.2 Integridad de proveedores
+
+Se validó que todos los `vendor_id` registrados en `products` existieran en
+la tabla maestra `vendors`.
+
+```{r integridad_vendors}
+
+tabla_fk_vendors <- aud_fk_vendors %>%
+  transmute(
+    `Total productos` =
+      format(
+        total_productos,
+        big.mark = ",",
+        scientific = FALSE
+      ),
+
+    `Productos afectados` =
+      format(
+        filas_afectadas,
+        big.mark = ",",
+        scientific = FALSE
+      ),
+
+    `Vendors inexistentes` =
+      vendors_inexistentes,
+
+    `% productos afectados` =
+      paste0(
+        pct_productos_afectados,
+        "%"
+      )
+  )
+
+knitr::kable(
+  tabla_fk_vendors,
+  align = "r"
+)
+
+```
+
+Se identificaron
+**`r aud_fk_vendors$filas_afectadas` productos**
+cuyo `vendor_id` no tiene correspondencia en la tabla `vendors`.
+
+Todos los casos pertenecen al mismo identificador de proveedor,
+**`VND_031`**, por lo que existe un único proveedor huérfano en la relación.
+
+Los productos afectados pertenecen a las categorías **Alimentos** y
+**Cuidado Personal**.
+
+### Productos afectados
+
+```{r detalle_vendor_inexistente}
+
+knitr::kable(
+  detalle_vendor_inexistente,
+  align = c("l", "l", "l", "l", "l", "r")
+)
+
+```
+
+Aunque el problema afecta únicamente cinco registros de la dimensión de
+productos, su relevancia aumenta al considerar su presencia en las ventas.
+
+### Impacto transaccional
+
+```{r impacto_vendor_inexistente}
+
+tabla_impacto_vendor <- impacto_vendor_inexistente %>%
+  transmute(
+    `Líneas afectadas` =
+      format(
+        lineas_afectadas,
+        big.mark = ",",
+        scientific = FALSE
+      ),
+
+    `% líneas` =
+      paste0(
+        pct_lineas_afectadas,
+        "%"
+      ),
+
+    `Transacciones afectadas` =
+      format(
+        transacciones_afectadas,
+        big.mark = ",",
+        scientific = FALSE
+      ),
+
+    `% transacciones` =
+      paste0(
+        pct_transacciones_afectadas,
+        "%"
+      ),
+
+    `Unidades` =
+      format(
+        unidades,
+        big.mark = ",",
+        scientific = FALSE
+      ),
+
+    `GMV detalle` =
+      format(
+        round(gmv_detalle, 2),
+        big.mark = ",",
+        scientific = FALSE
+      )
+  )
+
+knitr::kable(
+  tabla_impacto_vendor,
+  align = "r"
+)
+
+```
+
+Los cinco productos asociados a `VND_031` participan en
+**`r format(impacto_vendor_inexistente$transacciones_afectadas, big.mark = ",")`**
+transacciones, equivalentes al
+**`r impacto_vendor_inexistente$pct_transacciones_afectadas`%**
+del total.
+
+Además, representan
+**`r format(impacto_vendor_inexistente$lineas_afectadas, big.mark = ",")`**
+líneas de venta
+(**`r impacto_vendor_inexistente$pct_lineas_afectadas`%** del detalle),
+**`r format(impacto_vendor_inexistente$unidades, big.mark = ",")`**
+unidades y un GMV calculado desde el detalle de aproximadamente
+**`r format(round(impacto_vendor_inexistente$gmv_detalle, 2), big.mark = ",")`**.
+
+Por lo tanto, aunque la inconsistencia afecta una cantidad reducida de
+productos, su impacto transaccional es material.
+
+**Decisión:** conservar los cinco productos y sus ventas. Se mantendrá
+`VND_031` como identificador del proveedor y se creará una bandera de
+integridad referencial para identificar que el proveedor no fue encontrado
+en la tabla maestra.
+
+Cuando un análisis requiera atributos provenientes de `vendors`, como nombre,
+país, tier o disponibilidad en catálogo compartido, `VND_031` se clasificará
+como `VENDOR_NO_ENCONTRADO` hasta disponer de una corrección de la tabla
+maestra.
+
+Para los análisis de GMROI se conservarán las ventas, costos, unidades y
+categorías correspondientes a estos productos. Se evitarán uniones internas
+que eliminen los registros por falta de correspondencia en `vendors`.
+
+**Severidad:** Media-Alta. La inconsistencia afecta únicamente cinco productos,
+pero estos participan en aproximadamente
+**`r impacto_vendor_inexistente$pct_transacciones_afectadas`%**
+de las transacciones. Una unión incorrecta con la dimensión `vendors` podría
+excluir una fracción material de las ventas y sesgar los análisis de
+rentabilidad por proveedor.
+
+La principal anomalía de integridad referencial identificada corresponde a
+productos asociados al proveedor `VND_031`, inexistente en la tabla maestra
+`vendors`.
+
+El tratamiento definido prioriza conservar las ventas y mantener trazabilidad,
+evitando eliminar registros válidos por una deficiencia en la dimensión de
+proveedores.
+
+---
+
+# 6. Frescura
+
+Se evaluaron períodos consecutivos sin transacciones por tienda, considerando
+como relevantes los gaps de **3 o más días**.
+
+```{r frescura_resumen}
+
+tabla_frescura <- aud_frescura %>%
+  transmute(
+    `Gaps detectados` = cantidad_gaps,
+    `Tiendas con gap` = tiendas_con_gap,
+    `Gap máximo (días)` = gap_maximo_dias,
+    `Gaps >= 3 días` = gaps_3_dias_o_mas
+  )
+
+knitr::kable(
+  tabla_frescura,
+  align = "r"
+)
+
+```
+
+Se identificó un único gap de **7 días consecutivos** en `TIENDA_012`
+(Tienda Escuintla 12), entre el **10 y el 16 de septiembre de 2024**.
+
+```{r frescura_contexto}
+
+tabla_gap_contexto <- aud_gap_contexto %>%
+  transmute(
+    `Período` = periodo,
+    `Días` = dias,
+    `Días con ventas` = dias_con_ventas,
+    `Transacciones` = transacciones_totales,
+    `Promedio diario` = round(transacciones_promedio_dia, 2)
+  )
+
+knitr::kable(
+  tabla_gap_contexto,
+  align = c("l", "r", "r", "r", "r")
+)
+
+```
+
+La tienda registró actividad todos los días durante la semana anterior
+(58 transacciones) y posterior (49 transacciones), mientras que durante el gap
+no registró ninguna operación.
+
+El patrón es atípico; sin embargo, los datos no permiten determinar si corresponde
+a un cierre real de la tienda o a una interrupción en el reporte de información.
+
+**Decisión:** conservar los datos sin imputar ventas y marcar el período como
+alerta de frescura. No se interpretará automáticamente como una caída de demanda.
+
+**Severidad:** Media. El hallazgo afecta una sola tienda, pero puede distorsionar
+métricas semanales y análisis de estacionalidad.
+
+---
+
+# 7. Integridad temporal
+
+Se validó que las transacciones fueran registradas en fechas iguales o
+posteriores a la fecha de apertura (`opening_date`) de cada tienda.
+
+```{r integridad_temporal_resumen}
+
+tabla_integridad_temporal <- aud_integridad_temporal %>%
+  transmute(
+    `Transacciones afectadas` =
+      filas_afectadas,
+
+    `Tiendas afectadas` =
+      tiendas_afectadas
+  )
+
+knitr::kable(
+  tabla_integridad_temporal,
+  align = "r"
+)
+
+```
+
+Se identificaron **`r aud_integridad_temporal$filas_afectadas` transacciones**
+anteriores a la fecha oficial de apertura, concentradas en una única tienda.
+
+```{r integridad_temporal_detalle}
+
+tabla_integridad_temporal_detalle <- aud_integridad_temporal_detalle %>%
+  transmute(
+    `Tienda` = store_id,
+    `Nombre` = store_name,
+    `Fecha apertura` = opening_date,
+    `Transacciones afectadas` = transacciones_afectadas,
+    `Primera transacción` = primera_transaccion,
+    `Última transacción` = ultima_transaccion,
+    `Máximo días antes` = max_dias_antes_apertura
+  )
+
+knitr::kable(
+  tabla_integridad_temporal_detalle
+)
+
+```
+
+El hallazgo corresponde a `TIENDA_037` (Tienda Quetzaltenango 37), cuya fecha
+de apertura registrada es el **1 de junio de 2024**.
+
+Sin embargo, existen 50 transacciones entre el **15 y el 31 de mayo de 2024**,
+con un desfase máximo de **17 días antes de la apertura**.
+
+Los datos disponibles no permiten determinar si estas operaciones corresponden
+a actividades de preapertura o a una inconsistencia en la fecha maestra de la
+tienda.
+
+**Decisión:** conservar los registros en la capa original y marcarlos como
+alerta de integridad temporal. Las 50 transacciones se excluirán de análisis
+que requieran respetar el período oficial de operación de la tienda, como
+Comp Sales y productividad, mientras no exista evidencia que justifique
+corregir `opening_date`.
+
+**Severidad:** Media. El problema afecta una sola tienda y un número reducido
+de transacciones, pero puede distorsionar métricas basadas en antigüedad y
+períodos comparables.
+
+---
+
+# 8. Validación del experimento A/B
+
+Se evaluó si alguna tienda fue asignada simultáneamente a `CONTROL` y
+`TREATMENT` dentro del mismo experimento y durante períodos superpuestos.
+
+```{r ab_test_resumen}
+
+tabla_ab_test <- aud_ab_test %>%
+  transmute(
+    `Conflictos detectados` = conflictos,
+    `Tiendas afectadas` = tiendas_afectadas,
+    `Promociones afectadas` = promociones_afectadas
+  )
+
+knitr::kable(
+  tabla_ab_test,
+  align = "r"
+)
+
+```
+
+Se identificaron **`r aud_ab_test$conflictos` conflictos**, correspondientes a
+**`r aud_ab_test$tiendas_afectadas` tiendas** dentro de la promoción
+`Exhibicion_Q3_2024`.
+
+```{r ab_test_detalle}
+
+tabla_ab_conflictos <- detalle_ab_conflictos_tienda %>%
+  transmute(
+    `Tienda` = store_id,
+    `Nombre` = store_name,
+    `País` = country,
+    `Formato` = format,
+    `Tamaño m2` = size_sqm,
+    `Inicio CONTROL` = control_inicio,
+    `Fin CONTROL` = control_fin,
+    `Inicio TREATMENT` = treatment_inicio,
+    `Fin TREATMENT` = treatment_fin
+  )
+
+knitr::kable(
+  tabla_ab_conflictos
+)
+
+```
+
+Las tiendas `TIENDA_008` y `TIENDA_037` aparecen asignadas a ambas variantes
+durante todo el período comprendido entre el **1 de septiembre y el 12 de
+octubre de 2024**.
+
+Esta condición genera contaminación experimental y no permite determinar de
+forma confiable a qué grupo pertenece cada establecimiento.
+
+**Decisión:** conservar los registros originales, pero excluir ambas tiendas
+del análisis principal del experimento A/B. No se realizará una reasignación
+arbitraria a CONTROL o TREATMENT.
+
+**Severidad:** Alta para el análisis experimental. Aunque únicamente afecta
+dos tiendas, su inclusión comprometería la independencia entre los grupos y
+podría sesgar la estimación del efecto de la estrategia de exhibición.
+
+---
+
+# 9. Resumen de la auditoría
+
+La siguiente tabla consolida los principales hallazgos identificados durante
+la auditoría y el tratamiento definido para los análisis posteriores.
+
+```{r resumen_auditoria}
+
+resumen_bloque0 <- tibble::tibble(
+
+  Dimensión = c(
+    "Completitud",
+    "Consistencia",
+    "Unicidad",
+    "Validez",
+    "Integridad referencial",
+    "Frescura",
+    "Integridad temporal",
+    "A/B Test"
+  ),
+
+  Hallazgo = c(
+
+    paste0(
+      aud_completitud$pct_customer_id_nulo,
+      "% de transacciones sin customer_id, consistente con loyalty_card = FALSE."
+    ),
+
+    paste0(
+      format(aud_consistencia$no_coinciden, big.mark = ","),
+      " transacciones presentan diferencias entre total_amount y el detalle."
+    ),
+
+    "No se identificaron transaction_id duplicados.",
+
+    paste0(
+      aud_total_amount$monto_cero,
+      " transacciones con total_amount = 0 y ",
+      format(aud_precio_cero$precio_cero_sin_promo, big.mark = ","),
+      " líneas con unit_price = 0 sin promoción, concentradas en ITEM_089."
+    ),
+
+    ifelse(
+      aud_fk_stores$filas_afectadas == 0,
+      paste0(
+        "Sin problemas en store_id. ",
+        aud_fk_vendors$filas_afectadas,
+        " productos están asociados al vendor inexistente VND_031."
+      ),
+      paste0(
+        aud_fk_stores$filas_afectadas,
+        " transacciones con tienda inexistente y ",
+        aud_fk_vendors$filas_afectadas,
+        " productos asociados al vendor inexistente VND_031."
+      )
+    ),
+
+    paste0(
+      "Un gap de ",
+      aud_frescura$gap_maximo_dias,
+      " días consecutivos sin transacciones en TIENDA_012."
+    ),
+
+    paste0(
+      aud_integridad_temporal$filas_afectadas,
+      " transacciones de TIENDA_037 registradas antes de opening_date."
+    ),
+
+    paste0(
+      aud_ab_test$tiendas_afectadas,
+      " tiendas asignadas simultáneamente a CONTROL y TREATMENT."
+    )
+  ),
+
+  Evidencia = c(
+
+    paste0(
+      format(aud_completitud$customer_id_nulo, big.mark = ","),
+      " de ",
+      format(aud_completitud$total_transacciones, big.mark = ","),
+      " transacciones; 0 inconsistencias con loyalty_card."
+    ),
+
+    paste0(
+      aud_consistencia$pct_no_coinciden,
+      "% del total; mediana de diferencia = ",
+      round(aud_magnitud_diferencias$mediana, 2),
+      "; máximo = ",
+      round(aud_magnitud_diferencias$diferencia_maxima, 2),
+      "."
+    ),
+
+    paste0(
+      "0 IDs duplicados y ",
+      aud_unicidad$filas_excedentes,
+      " filas excedentes."
+    ),
+
+    paste0(
+      aud_precio_cero$pct_precio_cero_sin_promo,
+      "% de las líneas. ITEM_089 tiene costo 7.10 y mediana de precio 13.10."
+    ),
+
+    paste0(
+      format(impacto_vendor_inexistente$transacciones_afectadas, big.mark = ","),
+      " transacciones afectadas (",
+      impacto_vendor_inexistente$pct_transacciones_afectadas,
+      "% del total)."
+    ),
+
+    paste0(
+      "TIENDA_012: 58 transacciones en los 7 días previos, 0 durante el gap y ",
+      "49 en los 7 días posteriores."
+    ),
+
+    paste0(
+      "TIENDA_037: ventas entre 2024-05-15 y 2024-05-31; ",
+      "máximo 17 días antes de la apertura."
+    ),
+
+    paste0(
+      "TIENDA_008 y TIENDA_037 aparecen en ambas variantes durante ",
+      "todo el período 2024-09-01 a 2024-10-12."
+    )
+  ),
+
+  Decisión = c(
+
+    "Conservar. Excluir únicamente de cohortes y análisis que requieran identificación de cliente.",
+
+    "Conservar y marcar como alerta. No sustituir montos hasta definir la fuente monetaria oficial.",
+
+    "Sin tratamiento. Utilizar transaction_id como identificador único.",
+
+    "Conservar en raw y marcar anomalías. No imputar precios; tratar por separado en margen y GMROI.",
+
+    "Conservar ventas. Mantener VND_031 como proveedor no encontrado y evitar INNER JOIN que elimine operaciones.",
+
+    "Conservar sin imputar ventas. Marcar 2024-09-10 a 2024-09-16 como alerta de frescura.",
+
+    "Conservar y marcar alerta. Excluir estas operaciones de análisis sujetos a la fecha oficial de apertura.",
+
+    "Excluir TIENDA_008 y TIENDA_037 del análisis principal del experimento A/B."
+  ),
+
+  Severidad = c(
+    "Informativa",
+    "Media",
+    "Sin hallazgos",
+    "Media",
+    "Media-Alta",
+    "Media",
+    "Media",
+    "Alta"
+  )
+)
+
+knitr::kable(
+  resumen_bloque0,
+  align = c("l", "l", "l", "l", "l")
+)
+
+```
+
+La auditoría evidencia una calidad general adecuada para continuar con los
+análisis, aunque se identificaron anomalías puntuales que requieren controles
+específicos.
+
+Los principales riesgos corresponden a la inconsistencia entre `total_amount`
+y el detalle de algunas transacciones, la ausencia del proveedor `VND_031` en
+la tabla maestra y la asignación conflictiva de dos tiendas dentro del
+experimento A/B.
+
+No se modificaron los archivos originales. Los tratamientos definidos se
+aplicarán posteriormente mediante reglas de exclusión, banderas de calidad o
+clasificaciones explícitas, según corresponda.

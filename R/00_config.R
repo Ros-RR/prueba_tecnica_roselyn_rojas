@@ -1,3 +1,6 @@
+## CONFIGURACIONES
+# ============================================================
+
 ## 1- LLAMAR LIBRERIAS
 
 library(readr)
